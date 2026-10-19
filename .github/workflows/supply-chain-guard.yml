@@ -1,0 +1,44 @@
+name: Supply-chain Guard
+
+# Blocks the "disguised payload + auto-run" pattern described in SECURITY.md
+# ("Repository supply-chain safeguards").
+#
+# Two deliberate design choices:
+#
+#   1. No `paths:` filter. The attack can land in any directory, and a path
+#      filter would let a contributor pick a path the guard does not watch.
+#      This job runs on every pull request and every push to master.
+#
+#   2. No dependency installation. The guard runs on a bare checkout with plain
+#      node, so a malicious install-time hook cannot execute before the check
+#      that is meant to catch it. The script has no dependencies for this reason
+#      — keep it that way.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  supply-chain-guard:
+    name: Disguised payloads, auto-run tasks, install hooks
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+
+      # Run directly with node — deliberately not `pnpm run check:supply-chain`,
+      # which would require an install first.
+      - name: Check for supply-chain red flags
+        run: node scripts/check-supply-chain.js

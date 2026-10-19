@@ -16,3 +16,48 @@
 /sdk/           @Otaiki1
 /indexer/       @Otaiki1
 /oracle/        @Otaiki1
+
+# ── Supply-chain-sensitive paths ───────────────────────────────────────────────
+# Listed last, because GitHub applies the LAST matching pattern. These paths can
+# execute code on a contributor's machine or in CI, so they must never fall under
+# a broader per-workspace owner added later.
+#
+# NOTE: CODEOWNERS only makes review mandatory when branch protection on master
+# has "Require a pull request before merging" plus "Require review from Code
+# Owners" enabled. Without those settings this file is advisory only — the
+# enforcement that works regardless is the Supply-chain Guard workflow.
+# See SECURITY.md ("Repository supply-chain safeguards").
+
+# Editor and container configuration — can run tasks on folder/container open.
+/.vscode/                       @Otaiki1
+/.devcontainer/                 @Otaiki1
+
+# Dependency manifests and lockfiles — install-time lifecycle hooks live here.
+package.json                    @Otaiki1
+**/package.json                 @Otaiki1
+pnpm-lock.yaml                  @Otaiki1
+package-lock.json               @Otaiki1
+yarn.lock                       @Otaiki1
+.npmrc                          @Otaiki1
+pnpm-workspace.yaml             @Otaiki1
+
+# Git hooks — run on commit/push.
+/.husky/                        @Otaiki1
+
+# CI definitions — run with repository credentials.
+/.github/workflows/             @Otaiki1
+/.github/actions/               @Otaiki1
+
+# Binary and font assets — the carrier for a disguised payload.
+/public/fonts/                  @Otaiki1
+**/*.woff                       @Otaiki1
+**/*.woff2                      @Otaiki1
+**/*.eot                        @Otaiki1
+**/*.ttf                        @Otaiki1
+**/*.otf                        @Otaiki1
+**/*.wasm                       @Otaiki1
+**/*.node                       @Otaiki1
+
+# The guard itself, so it cannot be weakened without review.
+/scripts/check-supply-chain.js  @Otaiki1
+/.github/workflows/supply-chain-guard.yml @Otaiki1

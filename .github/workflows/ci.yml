@@ -61,6 +61,7 @@ jobs:
               - 'client/**'
               - 'packages/types/**'
               - 'backend/openapi.json'
+              - 'packages/**'
               - 'package.json'
               - 'pnpm-workspace.yaml'
               - '.github/workflows/ci.yml'
@@ -142,15 +143,6 @@ jobs:
         run: node scripts/check-contrast.js
         continue-on-error: false
 
-      - name: Check generated API types are up to date
-        run: |
-          pnpm run generate:types
-          if ! git diff --exit-code src/types/api.generated.ts; then
-            echo "❌ api.generated.ts is stale — run 'pnpm generate:types' and commit the result"
-            exit 1
-          fi
-        continue-on-error: false
-
       - name: Lint
         run: pnpm run lint
         continue-on-error: false
@@ -169,6 +161,8 @@ jobs:
 
       - name: Build
         run: pnpm run build
+        env:
+          VITE_DEMO_MODE: 'true'
         continue-on-error: false
 
       - name: Self-test client entry chunk guard
@@ -182,11 +176,19 @@ jobs:
 
       - name: Generate OpenAPI and ensure committed spec is up-to-date
         run: |
-          pnpm run generate:openapi
-          git --no-pager diff --exit-code openapi.json
+          pnpm --dir backend run generate:openapi
+          git --no-pager diff --exit-code backend/openapi.json
+
+      - name: Check generated API types are up to date
+        run: |
+          pnpm --dir client run generate:types
+          if ! git diff --exit-code client/src/types/api.generated.ts; then
+            echo "api.generated.ts is stale - run 'pnpm --dir client run generate:types' and commit the result"
+            exit 1
+          fi
 
       - name: Validate OpenAPI spec
-        run: pnpm run validate:openapi
+        run: pnpm --dir backend run validate:openapi
 
       - name: Upload OpenAPI artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -220,7 +222,11 @@ jobs:
       run:
         working-directory: ./sdk
     steps:
+      # Full history: the API compatibility gate diffs sdk/etc/*.api.md against
+      # the pull request's base commit, which a shallow clone cannot resolve.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
 
       - name: Setup pnpm
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
@@ -271,6 +277,15 @@ jobs:
         run: pnpm run test --coverage
         continue-on-error: false
 
+      # The SDK fee accuracy specs import the shared harness, so it is verified
+      # here even when the turbo job is skipped for an SDK-only change.
+      - name: Verify shared fee accuracy harness
+        run: |
+          pnpm --filter @tikka/fee-accuracy run lint
+          pnpm --filter @tikka/fee-accuracy run typecheck
+          pnpm --filter @tikka/fee-accuracy run test
+        continue-on-error: false
+
       - name: Upload coverage artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -303,8 +318,50 @@ jobs:
           pnpm exec api-extractor run --config api-extractor.light.json
         continue-on-error: false
 
+# Deprecation policy gate (docs/RELEASE.md § Deprecation Policy):
+      # a public export may only disappear under a major bump, and every
+      # @deprecated export must survive at least one minor release.
+      - name: API compatibility / deprecation check
+        if: github.event_name == 'pull_request'
+        working-directory: .
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: node scripts/check-api-compat.mjs "$BASE_SHA"
+        continue-on-error: false
+
       - name: Assert light bundle excludes NestJS
         run: pnpm run analyze:light
+
+      - name: Check bundle size budgets
+        run: |
+          pnpm size-check --json > size-summary.json || SIZE_CHECK_EXIT_CODE=$?
+          node -e '
+            const fs = require("fs");
+            let summary = "### 📦 SDK Bundle Size Budgets\n\n";
+            summary += "| Bundle | Size | Limit | Status |\n";
+            summary += "| --- | --- | --- | --- |\n";
+            try {
+              const content = fs.readFileSync("size-summary.json", "utf8");
+              const data = JSON.parse(content);
+              if (Array.isArray(data)) {
+                for (const item of data) {
+                  const sizeBytes = item.size ?? item.sizeGzip ?? item.total;
+                  const sizeStr = sizeBytes !== undefined ? (sizeBytes >= 1024 ? (sizeBytes / 1024).toFixed(2) + " kB" : sizeBytes + " B") : "N/A";
+                  const limitStr = item.limit || "N/A";
+                  const statusStr = item.passed !== false ? "✅ Passed" : "❌ Exceeded";
+                  summary += `| ${item.name || "Bundle"} | ${sizeStr} | ${limitStr} | ${statusStr} |\n`;
+                }
+              }
+            } catch (err) {
+              summary += "Unable to parse size-check output.\n";
+            }
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
+          '
+          pnpm size-check || true
+          if [ "${SIZE_CHECK_EXIT_CODE:-0}" -ne 0 ]; then
+            echo "❌ SDK bundle size limit budget exceeded!"
+            exit $SIZE_CHECK_EXIT_CODE
+          fi
         continue-on-error: false
 
       - name: Check bundle size budgets
@@ -377,6 +434,10 @@ jobs:
 
       - name: Lint
         run: pnpm run lint
+        continue-on-error: false
+
+      - name: Typecheck
+        run: pnpm run typecheck
         continue-on-error: false
 
       - name: Run tests (mocked)
